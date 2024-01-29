@@ -1,5 +1,13 @@
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.SendChannel
+import kotlinx.coroutines.channels.actor
+import kotlinx.coroutines.channels.produce
+import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.lang.Exception
+import java.util.concurrent.Executors
 
 suspend fun main(args: Array<String>) {
     //simpleCoroutine()
@@ -12,7 +20,25 @@ suspend fun main(args: Array<String>) {
 
 //    asyncMulti()
 
-    testCoroutineContext()
+//    testCoroutineContext()
+
+//    channelTest()
+
+//    channelReceiveTest()
+
+//    flowSimple()
+
+//    flowComplex()
+
+//    flowDispatch()
+
+//    coroutineLockText()
+
+//    coroutineActor()
+
+//    coroutineFunction()
+
+    coroutineException()
 }
 
 //14
@@ -141,4 +167,194 @@ fun testCoroutineContext() = runBlocking {
         throw Exception("haha")
     }.join()
 }
+
+//19 channel
+//或使用consumeEach
+fun channelTest() = runBlocking {
+    val channel = Channel<Int>()
+    launch {
+        (1..3).forEach {
+            channel.send(it)
+            log("send: $it")
+        }
+        channel.close()
+    }
+    launch {
+        for(i in channel) {
+            log("Receive:$i")
+        }
+    }
+    log("end")
+}
+
+fun log(text: Any) = println(Thread.currentThread().name + " " + text)
+
+//19 channel,使用receive
+fun channelReceiveTest() = runBlocking {
+    val channel = produce {
+        (1..2).forEach {
+            send(it)
+            log("send: $it")
+        }
+    }
+    while(!channel.isClosedForReceive) {
+        val result = channel.receiveCatching()
+        log("Receive: ${result.getOrNull()}")
+    }
+}
+
+//20 flow
+fun flowSimple() = runBlocking {
+    flow {
+        (1..5).forEach {
+            emit(it)
+        }
+    }.filter { it > 2 }
+        .map { it * 2 }
+        .take(2)
+        .collect {
+            println(it)
+        }
+}
+
+//20 flow切换线程
+fun flowComplex() = runBlocking {
+    flow {
+        log("emit")
+        emit(1)
+    }.filter {
+        log("filter")
+        it > 0
+    }.flowOn(Dispatchers.IO)
+        .collect {
+            log("collect")
+        }
+}
+
+//21 上下游切换线程
+val dispatcher = Executors.newSingleThreadExecutor { Thread(it, "earthgee") }.asCoroutineDispatcher()
+val scope = CoroutineScope(dispatcher)
+
+fun flowDispatch() = runBlocking {
+    flow {
+        log("emit")
+        emit(1)
+    }.filter {
+        log("filter")
+        it > 0
+    }.onEach {
+        log("collect")
+    }.launchIn(scope)
+}
+
+//22 并发锁
+fun coroutineLockText() = runBlocking {
+    var i = 0
+    val mutex = Mutex()
+    val jobs = mutableListOf<Job>()
+    repeat(10) { index ->
+        val job = launch(Dispatchers.Default) {
+            log("coroutine $index")
+            delay(1000L)
+            repeat(1000) {
+                mutex.withLock {
+                    i++
+                }
+            }
+        }
+        jobs.add(job)
+    }
+    jobs.joinAll()
+    log("i = $i")
+}
+
+//22 actor
+sealed class Msg
+object AddMsg: Msg()
+class ResultMsg(val deferred: CompletableDeferred<Int>): Msg()
+fun coroutineActor() = runBlocking {
+    val actor: SendChannel<Msg> = actor {
+        var counter = 0
+        for(msg in channel) {
+            when(msg) {
+                is AddMsg -> {
+                    counter++
+                }
+                is ResultMsg -> {
+                    msg.deferred.complete(counter)
+                }
+            }
+        }
+    }
+
+    val jobs = mutableListOf<Job>()
+    repeat(10) { index ->
+        val job = launch(Dispatchers.Default) {
+            log("$index")
+            delay(1000L)
+            repeat(1000) {
+                actor.send(AddMsg)
+            }
+        }
+        jobs.add(job)
+    }
+
+    jobs.joinAll()
+
+    val deferred = CompletableDeferred<Int>()
+    actor.send(ResultMsg(deferred))
+    val result = deferred.await()
+    actor.close()
+    log("i = ${result}")
+}
+
+//22 函数式思想处理并发
+fun coroutineFunction() = runBlocking {
+    (1..10).map { num ->
+        async(Dispatchers.Default) {
+            log("$num")
+            delay(1000L)
+            var counter = 0
+            repeat(1000) {
+                counter++
+            }
+            return@async counter
+        }
+    }.awaitAll().sum().also {
+        log("i = $it")
+    }
+}
+
+//23 协程的异常与取消
+fun coroutineException() = runBlocking {
+    val job = launch(Dispatchers.Default) {
+        var i = 0
+        while(true) {
+            try {
+                delay(500L)
+            } catch (e: CancellationException) {
+                println("${e.message}")
+                throw e
+            }
+            i++
+            println("i = $i")
+        }
+    }
+
+    job.invokeOnCompletion {
+        println("invoke compelte")
+    }
+
+    delay(2000L)
+    job.cancel()
+    job.join()
+    println("end")
+}
+
+
+
+
+
+
+
 
