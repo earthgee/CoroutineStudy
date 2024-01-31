@@ -8,6 +8,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.lang.Exception
 import java.util.concurrent.Executors
+import kotlin.coroutines.Continuation
 
 suspend fun main(args: Array<String>) {
     //simpleCoroutine()
@@ -36,9 +37,11 @@ suspend fun main(args: Array<String>) {
 
 //    coroutineActor()
 
-//    coroutineFunction()
+    coroutineFunction()
 
-    coroutineException()
+//    coroutineException()
+
+//    testCoroutineSource()
 }
 
 //14
@@ -351,8 +354,12 @@ fun coroutineException() = runBlocking {
     println("end")
 }
 
-
-
+//协程源码
+fun testCoroutineSource() {
+    var label = 0
+    label = label or Int.MIN_VALUE
+    println(label)
+}
 
 
 
