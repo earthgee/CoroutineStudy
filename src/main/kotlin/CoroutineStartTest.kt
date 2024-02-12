@@ -19,7 +19,7 @@ private fun testStartCoroutine() {
     block.startCoroutine(continuation)
 }
 
-val block = suspend {
+private val block = suspend {
     println("Hello")
     delay(1000L)
     println("World")
