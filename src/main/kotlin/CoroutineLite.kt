@@ -1,8 +1,6 @@
+import kotlinx.coroutines.delay
 import java.util.concurrent.atomic.AtomicReference
-import kotlin.coroutines.Continuation
-import kotlin.coroutines.CoroutineContext
-import kotlin.coroutines.EmptyCoroutineContext
-import kotlin.coroutines.startCoroutine
+import kotlin.coroutines.*
 
 interface CJob: CoroutineContext.Element {
 
@@ -22,6 +20,12 @@ interface CJob: CoroutineContext.Element {
     fun remove(disposable: Disposable)
 
     suspend fun join()
+
+}
+
+interface CDeferred<T>: CJob {
+
+    suspend fun await(): T
 
 }
 
@@ -100,7 +104,20 @@ abstract class AbstractCoroutine<T>(context: CoroutineContext)
     }
 
     override suspend fun join() {
-        TODO("Not yet implemented")
+        when(state.get()) {
+            is CoroutineState.Incomplete,
+            is CoroutineState.Cancelling ->
+                return joinSuspend()
+            is CoroutineState.Complete<*> ->
+                return
+        }
+    }
+
+    private suspend fun joinSuspend() =
+        suspendCoroutine<Unit> { continuation ->
+        doOnCompleted {  result ->
+            continuation.resume(Unit)
+        }
     }
 
     override fun resumeWith(result: Result<T>) {
@@ -217,6 +234,30 @@ inline fun <reified T: Disposable> DisposableList.loopOn(crossinline action: (T)
 
 class StandaloneCoroutine(context: CoroutineContext): AbstractCoroutine<Unit>(context)
 
+class CDeferredCoroutine<T>(context: CoroutineContext)
+    : AbstractCoroutine<T>(context), CDeferred<T> {
+    override suspend fun await(): T {
+        val currentState = state.get()
+        return when(currentState) {
+            is CoroutineState.Incomplete,
+            is CoroutineState.Cancelling -> awaitSuspend()
+            is CoroutineState.Complete<*> -> {
+                currentState.exception?.let {
+                    throw it
+                } ?:  (currentState.value as T)
+            }
+        }
+    }
+
+    private suspend fun awaitSuspend() =
+        suspendCoroutine<T> {  continuation ->
+        doOnCompleted {  result ->
+            continuation.resumeWith(result)
+        }
+    }
+
+}
+
 fun claunch(context: CoroutineContext = EmptyCoroutineContext,
            block: suspend () -> Unit): CJob {
     val completion = StandaloneCoroutine(context)
@@ -224,13 +265,35 @@ fun claunch(context: CoroutineContext = EmptyCoroutineContext,
     return completion
 }
 
-fun main() {
+fun <T> casync(context: CoroutineContext = EmptyCoroutineContext,
+           block: suspend () -> T): CDeferred<T> {
+    val completion = CDeferredCoroutine<T>(context)
+    block.startCoroutine(completion)
+    return completion
+}
+
+suspend fun main() {
+    testAsync()
+}
+
+suspend fun testCLaunch() {
     val job = claunch {
-        println("hello world")
+        println("hello")
+        delay(1000L)
+        println("world")
     }
     job.invokeOnCompletion {
         println("job onComplete")
     }
+    job.join()
+}
+
+suspend fun testAsync() {
+    val deferred = casync {
+        delay(1000L)
+        "Hello World"
+    }
+    println(deferred.await())
 }
 
 
