@@ -1,4 +1,10 @@
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import sun.rmi.server.Dispatcher
+import java.rmi.Remote
+import java.rmi.server.RemoteCall
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.*
 
@@ -260,20 +266,95 @@ class CDeferredCoroutine<T>(context: CoroutineContext)
 
 fun claunch(context: CoroutineContext = EmptyCoroutineContext,
            block: suspend () -> Unit): CJob {
-    val completion = StandaloneCoroutine(context)
+    val completion = StandaloneCoroutine(newCoroutineContext(context))
     block.startCoroutine(completion)
     return completion
 }
 
 fun <T> casync(context: CoroutineContext = EmptyCoroutineContext,
            block: suspend () -> T): CDeferred<T> {
-    val completion = CDeferredCoroutine<T>(context)
+    val completion = CDeferredCoroutine<T>(newCoroutineContext(context))
     block.startCoroutine(completion)
     return completion
 }
 
+interface CDispatcher {
+    fun dispatch(block: () -> Unit)
+}
+
+open class DispatcherContext(private val dispatcher: CDispatcher)
+    : AbstractCoroutineContextElement(ContinuationInterceptor), ContinuationInterceptor {
+
+        override fun <T> interceptContinuation(continuation: Continuation<T>)
+                : Continuation<T> = DispatchedContinuation(continuation, dispatcher)
+
+}
+
+private class DispatchedContinuation<T>(val delegate: Continuation<T>,
+                                        val dispatcher: CDispatcher): Continuation<T> {
+
+    override val context: CoroutineContext = delegate.context
+
+    override fun resumeWith(result: Result<T>) {
+        dispatcher.dispatch {
+            delegate.resumeWith(result)
+        }
+    }
+
+}
+
+object DefaultDispatcher: CDispatcher {
+
+    private val threadGroup = ThreadGroup("DefaultDispatcher")
+    private val threadIndex = AtomicInteger(0)
+
+    private val executor = Executors.newFixedThreadPool(
+        Runtime.getRuntime().availableProcessors() +1
+    ) { runnable ->
+        Thread(threadGroup, runnable,
+            "${threadGroup.name}=worker-${threadIndex.getAndIncrement()}").apply {
+                isDaemon = true
+        }
+    }
+
+    override fun dispatch(block: () -> Unit) {
+        executor.submit(block)
+    }
+
+
+}
+
+object CDispatchers {
+    val Default by lazy {
+        DispatcherContext(DefaultDispatcher)
+    }
+}
+
+fun newCoroutineContext(context: CoroutineContext): CoroutineContext {
+    val combined = context +
+            CCoroutineName("@coroutine")
+    return if(combined != CDispatchers.Default
+        && combined[ContinuationInterceptor] == null) {
+        combined + CDispatchers.Default
+    } else {
+        combined
+    }
+}
+
+class CCoroutineName(val name: String): CoroutineContext.Element {
+
+    companion object Key: CoroutineContext.Key<CCoroutineName>
+
+    override val key = Key
+
+    override fun toString() = name
+
+}
+
 suspend fun main() {
-    testAsync()
+//    testAsync()
+
+    testThreadAsync()
 }
 
 suspend fun testCLaunch() {
@@ -290,9 +371,23 @@ suspend fun testCLaunch() {
 
 suspend fun testAsync() {
     val deferred = casync {
+        println("casync thread:${Thread.currentThread().name}")
         delay(1000L)
         "Hello World"
     }
+    println("await thread:${Thread.currentThread().name}")
+    println(deferred.await())
+}
+
+suspend fun testThreadAsync() {
+    val deferred = casync {
+        println(coroutineContext[CCoroutineName])
+        println("casync thread:${Thread.currentThread().name}")
+        delay(1000L)
+        println("casync thread:${Thread.currentThread().name}")
+        "Hello World"
+    }
+    println("await thread:${Thread.currentThread().name}")
     println(deferred.await())
 }
 
