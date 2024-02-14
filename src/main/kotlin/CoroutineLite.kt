@@ -1,12 +1,14 @@
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
-import sun.rmi.server.Dispatcher
-import java.rmi.Remote
-import java.rmi.server.RemoteCall
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.*
+import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
+import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
+import kotlin.coroutines.intrinsics.intercepted
+import kotlin.random.Random
 
 interface CJob: CoroutineContext.Element {
 
@@ -58,7 +60,23 @@ abstract class AbstractCoroutine<T>(context: CoroutineContext)
     }
 
     override fun invokeOnCancel(onCancel: OnCancel): Disposable {
-        TODO("Not yet implemented")
+        val disposable = CancellationHandlerDisposable(this, onCancel)
+        val newState = state.updateAndGet {  prev ->
+            when(prev) {
+                is CoroutineState.Incomplete -> {
+                    CoroutineState.Incomplete().from(prev).with(disposable)
+                }
+                is CoroutineState.Cancelling,
+                is CoroutineState.Complete<*> -> {
+                    prev
+                }
+            }
+        }
+
+        (newState as? CoroutineState.Cancelling)?.let {
+            onCancel()
+        }
+        return disposable
     }
 
     override fun invokeOnCompletion(onComplete: OnComplete): Disposable {
@@ -93,7 +111,20 @@ abstract class AbstractCoroutine<T>(context: CoroutineContext)
     }
 
     override fun cancel() {
-        //TODO
+        val prevState = state.getAndUpdate { prev ->
+            when(prev) {
+                is CoroutineState.Incomplete -> {
+                    CoroutineState.Cancelling()
+                }
+                is CoroutineState.Cancelling,
+                is CoroutineState.Complete<*> -> prev
+            }
+        }
+
+        if(prevState is CoroutineState.Incomplete) {
+            prevState.notifyCancellation()
+            prevState.clear()
+        }
     }
 
     override fun remove(disposable: Disposable) {
@@ -114,17 +145,26 @@ abstract class AbstractCoroutine<T>(context: CoroutineContext)
             is CoroutineState.Incomplete,
             is CoroutineState.Cancelling ->
                 return joinSuspend()
-            is CoroutineState.Complete<*> ->
+            is CoroutineState.Complete<*> -> {
+                val currentCallingJobState = coroutineContext[CJob]?.isActive ?: return
+                if(!currentCallingJobState) {
+                    throw CancellationException("Coroutine is Cancelled")
+                }
                 return
+            }
         }
     }
 
     private suspend fun joinSuspend() =
-        suspendCoroutine<Unit> { continuation ->
-        doOnCompleted {  result ->
-            continuation.resume(Unit)
+        csuspendCancellableCoroutine<Unit> { continuation ->
+            val disposable = doOnCompleted {  result ->
+                continuation.resume(Unit)
+            }
+
+            continuation.invokeOnCancellation {
+                disposable.dispose()
+            }
         }
-    }
 
     override fun resumeWith(result: Result<T>) {
         val newState = state.updateAndGet {  prev ->
@@ -140,8 +180,34 @@ abstract class AbstractCoroutine<T>(context: CoroutineContext)
             }
         }
 
+        when(newState) {
+            is CoroutineState.Complete<*> -> makeCompletion(newState as CoroutineState.Complete<T>)
+        }
+
+    }
+
+    protected open fun handleJobException(e: Throwable) = false
+
+    private fun makeCompletion(newState: CoroutineState.Complete<T>) {
+        val result = if(newState.exception == null) {
+            Result.success(newState.value)
+        } else {
+            Result.failure<T>(newState.exception)
+        }
+
+        result.exceptionOrNull()?.let(::tryHandleException)
+
         newState.notifyCompletion(result)
         newState.clear()
+    }
+
+    private fun tryHandleException(e: Throwable): Boolean {
+        return when(e) {
+            is CancellationException -> false
+            else -> {
+                handleJobException(e)
+            }
+        }
     }
 
 }
@@ -161,7 +227,13 @@ class CompletionHandlerDisposable<T>(
 
 }
 
-//class CancellationHandlerDisposable<T>
+class CancellationHandlerDisposable(val job: CJob, val onCancel: OnCancel): Disposable {
+
+    override fun dispose() {
+        job.remove(this)
+    }
+
+}
 
 typealias OnCancel = () -> Unit
 
@@ -197,6 +269,12 @@ sealed class CoroutineState {
     fun <T> notifyCompletion(result: Result<T>) {
         this.disposableList.loopOn<CompletionHandlerDisposable<T>> {
             it.onComplete(result)
+        }
+    }
+
+    fun notifyCancellation() {
+        this.disposableList.loopOn<CancellationHandlerDisposable> {
+            it.onCancel()
         }
     }
 
@@ -238,7 +316,18 @@ inline fun <reified T: Disposable> DisposableList.loopOn(crossinline action: (T)
         }
     }
 
-class StandaloneCoroutine(context: CoroutineContext): AbstractCoroutine<Unit>(context)
+class StandaloneCoroutine(context: CoroutineContext): AbstractCoroutine<Unit>(context) {
+
+    override fun handleJobException(e: Throwable): Boolean {
+        super.handleJobException(e)
+        context[CoroutineExceptionHandler]?.handleException(context, e)
+            ?: Thread.currentThread().let {
+                it.uncaughtExceptionHandler.uncaughtException(it, e)
+            }
+        return true
+    }
+
+}
 
 class CDeferredCoroutine<T>(context: CoroutineContext)
     : AbstractCoroutine<T>(context), CDeferred<T> {
@@ -351,10 +440,167 @@ class CCoroutineName(val name: String): CoroutineContext.Element {
 
 }
 
+//cancel
+suspend inline fun <T> csuspendCancellableCoroutine(
+    crossinline block: (CancellableContinuation<T>) -> Unit): T =
+    suspendCoroutineUninterceptedOrReturn { continuation ->
+        val cancellable = CancellableContinuation(continuation.intercepted())
+        block(cancellable)
+        cancellable.getResult()
+    }
+
+sealed class CancelState {
+    object InComplete: CancelState()
+    class CancelHandler(val onCancel: OnCancel): CancelState()
+    class Complete<T>(val value: T? = null,
+                      val exception: Throwable?? = null): CancelState()
+    object Cancelled: CancelState()
+}
+
+enum class CancelDecision {
+    UNDECIDED, SUSPENDED, RESUMED
+}
+
+class CancellableContinuation<T>(private val continuation: Continuation<T>)
+    : Continuation<T> by continuation {
+
+    private val state = AtomicReference<CancelState>(CancelState.InComplete)
+    private val decision = AtomicReference(CancelDecision.UNDECIDED)
+
+    val isCompleted: Boolean
+        get() = when(state.get()){
+            CancelState.InComplete,
+            is CancelState.CancelHandler -> false
+            is CancelState.Complete<*>,
+            CancelState.Cancelled -> true
+        }
+
+    fun invokeOnCancellation(onCancel: OnCancel) {
+        val newState = state.updateAndGet {  prev ->
+            when(prev) {
+                CancelState.InComplete -> CancelState.CancelHandler(onCancel)
+                is CancelState.CancelHandler -> throw IllegalStateException("prohibit")
+                is CancelState.Complete<*>,
+                CancelState.Cancelled -> prev
+            }
+        }
+        if(newState is CancelState.Cancelled) {
+            onCancel()
+        }
+    }
+
+    fun cancel() {
+        if(isCompleted) {
+            return
+        }
+
+        val parent = continuation.context[CJob] ?: return
+        parent.cancel()
+    }
+
+    private fun installCancelHandler() {
+        if(isCompleted) {
+            return
+        }
+        val parent = continuation.context[CJob] ?: return
+        parent.invokeOnCancel {
+            doCancel()
+        }
+    }
+
+    private fun doCancel() {
+        val prevState = state.getAndUpdate {  prev ->
+            when(prev) {
+                is CancelState.CancelHandler,
+                CancelState.InComplete -> {
+                    CancelState.Cancelled
+                }
+                CancelState.Cancelled,
+                is CancelState.Complete<*> -> {
+                    prev
+                }
+            }
+        }
+
+        if(prevState is CancelState.CancelHandler) {
+            prevState.onCancel()
+            resumeWithException(CancellationException("Cancelled"))
+        }
+    }
+
+    fun getResult(): Any? {
+        installCancelHandler()
+        if(decision.compareAndSet(CancelDecision.UNDECIDED, CancelDecision.SUSPENDED)) {
+            return COROUTINE_SUSPENDED
+        }
+
+        return when(val currentState = state.get()) {
+            is CancelState.CancelHandler,
+            CancelState.InComplete -> {
+                COROUTINE_SUSPENDED
+            }
+            CancelState.Cancelled ->
+                throw CancellationException("Continuation is cancel")
+            is CancelState.Complete<*> -> {
+                (currentState as CancelState.Complete<T>).let {
+                    it.exception?.let { throw it } ?: it.value
+                }
+            }
+        }
+    }
+
+    override fun resumeWith(result: Result<T>) {
+        when {
+            decision.compareAndSet(CancelDecision.UNDECIDED, CancelDecision.RESUMED) -> {
+                state.set(CancelState.Complete(result.getOrNull(), result.exceptionOrNull()))
+            }
+            decision.compareAndSet(CancelDecision.SUSPENDED, CancelDecision.RESUMED) -> {
+                state.updateAndGet {  prev ->
+                    when(prev) {
+                        is CancelState.Complete<*> -> {
+                            throw IllegalStateException("Already completed")
+                        }
+                        else -> {
+                            CancelState.Complete(result.getOrNull(), result.exceptionOrNull())
+                        }
+                    }
+                }
+            }
+        }
+        continuation.resumeWith(result)
+    }
+
+}
+
+//exception
+interface CoroutineExceptionHandler: CoroutineContext.Element {
+
+    companion object Key: CoroutineContext.Key<CoroutineExceptionHandler>
+
+    fun handleException(context: CoroutineContext, exception: Throwable)
+
+}
+
+inline fun CoroutineExceptionHandler(crossinline handler: (CoroutineContext, Throwable) -> Unit)
+    : CoroutineExceptionHandler =
+        object: AbstractCoroutineContextElement(CoroutineExceptionHandler), CoroutineExceptionHandler {
+
+            override fun handleException(context: CoroutineContext, exception: Throwable) {
+                handler.invoke(context, exception)
+            }
+
+        }
+
 suspend fun main() {
+//    testCLaunch()
+
 //    testAsync()
 
-    testThreadAsync()
+//    testThreadAsync()
+
+//    testCancel()
+
+    testException()
 }
 
 suspend fun testCLaunch() {
@@ -381,7 +627,6 @@ suspend fun testAsync() {
 
 suspend fun testThreadAsync() {
     val deferred = casync {
-        println(coroutineContext[CCoroutineName])
         println("casync thread:${Thread.currentThread().name}")
         delay(1000L)
         println("casync thread:${Thread.currentThread().name}")
@@ -391,5 +636,71 @@ suspend fun testThreadAsync() {
     println(deferred.await())
 }
 
+private suspend fun testCancel() {
+    val job = claunch {
+        println("testCancel")
+        val r0 = nonCancellableFunction()
+        println("r0:$r0")
+        val r1 = cancellableFunction()
+        println("r1:$r1")
+    }
+    job.invokeOnCancel {
+        println("job onCancel")
+    }
 
+    job.cancel()
+    job.join()
+}
+
+suspend fun nonCancellableFunction() = suspendCoroutine<Int> { continuation ->
+
+    val completableFuture = CompletableFuture.supplyAsync {
+        Thread.sleep(1000L)
+        Random.nextInt()
+    }
+
+    completableFuture.thenApply {
+        continuation.resume(it)
+    }.exceptionally {
+        continuation.resumeWithException(it)
+    }
+
+}
+
+suspend fun cancellableFunction() = csuspendCancellableCoroutine<Int> { continuation ->
+
+    val completableFuture = CompletableFuture.supplyAsync {
+        Thread.sleep(1000L)
+        Random.nextInt()
+    }
+
+    continuation.invokeOnCancellation {
+        println("async task cancel")
+        completableFuture.cancel(true)
+    }
+
+    completableFuture.thenApply {
+        continuation.resume(it)
+    }.exceptionally {
+        continuation.resumeWithException(it)
+    }
+
+}
+
+suspend fun testException() {
+    val exceptionHandler = CoroutineExceptionHandler {
+        coroutineContext, throwable ->
+        println(throwable.message)
+    }
+
+    val job = claunch(exceptionHandler) {
+        println("hello")
+        throw NullPointerException("aha null")
+        println("world")
+    }
+    job.invokeOnCompletion {
+        println("job onComplete")
+    }
+    job.join()
+}
 

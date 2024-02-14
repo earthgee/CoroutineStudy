@@ -7,7 +7,6 @@ suspend fun main() {
 //    startCoroutine()
 //
 //    Thread.sleep(3000)
-
 }
 
 //不带receiver的启动协程
