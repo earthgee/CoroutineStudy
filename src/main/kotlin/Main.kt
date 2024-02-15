@@ -17,7 +17,7 @@ suspend fun main(args: Array<String>) {
 
 //    traversal()
 
-//    coroutinePC()
+    coroutinePC()
 
 //    asyncMulti()
 
@@ -37,7 +37,7 @@ suspend fun main(args: Array<String>) {
 
 //    coroutineActor()
 
-    coroutineFunction()
+//    coroutineFunction()
 
 //    coroutineException()
 
@@ -107,6 +107,9 @@ fun coroutinePC() = runBlocking {
             delay(100L)
             println("1 end")
         }
+        job1?.invokeOnCompletion {
+            println("1 complete cause by ${it?.message}")
+        }
         job2 = launch {
             println("2 start")
             delay(2000L)
@@ -120,16 +123,17 @@ fun coroutinePC() = runBlocking {
     }
 
     delay(50L) // 确保所有子 Job 已正常启动，且尚未结束(否则下面的遍历会错误)
-    parentJob.children.forEachIndexed { index, job ->
-        when(index) {
-            0 -> println("job is job1: ${job1 === job}")
-            1 -> println("job is job2: ${job2 === job}")
-            2 -> println("job is job3: ${job3 === job}")
-        }
-    }
+//    parentJob.children.forEachIndexed { index, job ->
+//        when(index) {
+//            0 -> println("job is job1: ${job1 === job}")
+//            1 -> println("job is job2: ${job2 === job}")
+//            2 -> println("job is job3: ${job3 === job}")
+//        }
+//    }
 
-    parentJob.join()
-    println("Process end!")
+    parentJob.cancel()
+    delay(10000L)
+//    println("Process end!")
 }
 
 //16 async优化

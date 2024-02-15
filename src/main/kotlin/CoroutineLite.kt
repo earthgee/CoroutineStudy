@@ -27,6 +27,8 @@ interface CJob: CoroutineContext.Element {
 
     fun remove(disposable: Disposable)
 
+//    fun attachChild(child: CJob): Disposable
+
     suspend fun join()
 
 }
@@ -38,11 +40,18 @@ interface CDeferred<T>: CJob {
 }
 
 abstract class AbstractCoroutine<T>(context: CoroutineContext)
-    : CJob, Continuation<T> {
+    : CJob, Continuation<T>, CoroutineMyScope {
+
+    protected val parentJob = context[CJob]
+
+    private var parentCancelDisposable: Disposable? = null
 
     protected val state = AtomicReference<CoroutineState>()
 
     override val context: CoroutineContext
+
+    override val scopeContext: CoroutineContext
+        get() = context
 
     val isCompleted
         get() = state.get() is CoroutineState.Complete<*>
@@ -57,6 +66,10 @@ abstract class AbstractCoroutine<T>(context: CoroutineContext)
     init {
         state.set(CoroutineState.Incomplete())
         this.context = context + this
+        parentCancelDisposable = parentJob?.invokeOnCancel {
+            cancel()
+        }
+//        parentCancelDisposable = parentJob?.attachChild(this)
     }
 
     override fun invokeOnCancel(onCancel: OnCancel): Disposable {
@@ -353,17 +366,17 @@ class CDeferredCoroutine<T>(context: CoroutineContext)
 
 }
 
-fun claunch(context: CoroutineContext = EmptyCoroutineContext,
-           block: suspend () -> Unit): CJob {
+fun CoroutineMyScope.claunch(context: CoroutineContext = EmptyCoroutineContext,
+           block: suspend CoroutineMyScope.() -> Unit): CJob {
     val completion = StandaloneCoroutine(newCoroutineContext(context))
-    block.startCoroutine(completion)
+    block.startCoroutine(completion, completion)
     return completion
 }
 
-fun <T> casync(context: CoroutineContext = EmptyCoroutineContext,
-           block: suspend () -> T): CDeferred<T> {
+fun <T> CoroutineMyScope.casync(context: CoroutineContext = EmptyCoroutineContext,
+           block: suspend CoroutineMyScope.() -> T): CDeferred<T> {
     val completion = CDeferredCoroutine<T>(newCoroutineContext(context))
-    block.startCoroutine(completion)
+    block.startCoroutine(completion, completion)
     return completion
 }
 
@@ -419,8 +432,8 @@ object CDispatchers {
     }
 }
 
-fun newCoroutineContext(context: CoroutineContext): CoroutineContext {
-    val combined = context +
+fun CoroutineMyScope.newCoroutineContext(context: CoroutineContext): CoroutineContext {
+    val combined = scopeContext + context +
             CCoroutineName("@coroutine")
     return if(combined != CDispatchers.Default
         && combined[ContinuationInterceptor] == null) {
@@ -591,6 +604,52 @@ inline fun CoroutineExceptionHandler(crossinline handler: (CoroutineContext, Thr
 
         }
 
+//scope
+interface CoroutineMyScope {
+    val scopeContext: CoroutineContext
+}
+
+//fun coroutineMyScope(context: CoroutineContext = EmptyCoroutineContext,
+//                                 block: suspend CoroutineMyScope.() -> Unit): CJob {
+//    val completion = StandaloneCoroutine(cnewCoroutineContext(context))
+//    block.startCoroutine(completion, completion)
+//    return completion
+//}
+
+//private fun cnewCoroutineContext(context: CoroutineContext): CoroutineContext {
+//    val combined = context +
+//            CCoroutineName("@ccoroutine")
+//    return if(combined != CDispatchers.Default
+//        && combined[ContinuationInterceptor] == null) {
+//        combined + CDispatchers.Default
+//    } else {
+//        combined
+//    }
+//}
+
+suspend fun <R> coroutineMyScope(block: suspend CoroutineMyScope.() -> R): R =
+    suspendCoroutine {  continuation ->
+        val coroutine = ScopeCoroutine(continuation.context, continuation)
+        block.startCoroutine(coroutine, coroutine)
+    }
+
+internal open class ScopeCoroutine<T>(
+    context: CoroutineContext,
+    protected val continuation: Continuation<T>) : AbstractCoroutine<T>(context) {
+
+    override fun resumeWith(result: Result<T>) {
+        super.resumeWith(result)
+        continuation.resumeWith(result)
+    }
+
+}
+
+object MyGlobalScope: CoroutineMyScope {
+    override val scopeContext: CoroutineContext
+        get() = EmptyCoroutineContext
+
+}
+
 suspend fun main() {
 //    testCLaunch()
 
@@ -600,56 +659,66 @@ suspend fun main() {
 
 //    testCancel()
 
-    testException()
+//    testException()
+
+    testPC()
 }
 
 suspend fun testCLaunch() {
-    val job = claunch {
-        println("hello")
-        delay(1000L)
-        println("world")
+    coroutineMyScope {
+        val job = claunch {
+            println("hello")
+            delay(1000L)
+            println("world")
+        }
+        job.invokeOnCompletion {
+            println("job onComplete")
+        }
+        job.join()
     }
-    job.invokeOnCompletion {
-        println("job onComplete")
-    }
-    job.join()
 }
 
 suspend fun testAsync() {
-    val deferred = casync {
-        println("casync thread:${Thread.currentThread().name}")
-        delay(1000L)
-        "Hello World"
+    coroutineMyScope {
+        val deferred = casync {
+            println("casync thread:${Thread.currentThread().name}")
+            delay(1000L)
+            "Hello World"
+        }
+        println("await thread:${Thread.currentThread().name}")
+        println(deferred.await())
     }
-    println("await thread:${Thread.currentThread().name}")
-    println(deferred.await())
 }
 
 suspend fun testThreadAsync() {
-    val deferred = casync {
-        println("casync thread:${Thread.currentThread().name}")
-        delay(1000L)
-        println("casync thread:${Thread.currentThread().name}")
-        "Hello World"
+    coroutineMyScope {
+        val deferred = casync {
+            println("casync thread:${Thread.currentThread().name}")
+            delay(1000L)
+            println("casync thread:${Thread.currentThread().name}")
+            "Hello World"
+        }
+        println("await thread:${Thread.currentThread().name}")
+        println(deferred.await())
     }
-    println("await thread:${Thread.currentThread().name}")
-    println(deferred.await())
 }
 
 private suspend fun testCancel() {
-    val job = claunch {
-        println("testCancel")
-        val r0 = nonCancellableFunction()
-        println("r0:$r0")
-        val r1 = cancellableFunction()
-        println("r1:$r1")
-    }
-    job.invokeOnCancel {
-        println("job onCancel")
-    }
+    coroutineMyScope {
+        val job = claunch {
+            println("testCancel")
+            val r0 = nonCancellableFunction()
+            println("r0:$r0")
+            val r1 = cancellableFunction()
+            println("r1:$r1")
+        }
+        job.invokeOnCancel {
+            println("job onCancel")
+        }
 
-    job.cancel()
-    job.join()
+        job.cancel()
+        job.join()
+    }
 }
 
 suspend fun nonCancellableFunction() = suspendCoroutine<Int> { continuation ->
@@ -693,14 +762,52 @@ suspend fun testException() {
         println(throwable.message)
     }
 
-    val job = claunch(exceptionHandler) {
-        println("hello")
-        throw NullPointerException("aha null")
-        println("world")
+    coroutineMyScope {
+        val job = claunch(exceptionHandler) {
+            println("hello")
+            throw NullPointerException("aha null")
+            println("world")
+        }
+        job.invokeOnCompletion {
+            println("job onComplete")
+        }
+        job.join()
     }
-    job.invokeOnCompletion {
-        println("job onComplete")
-    }
-    job.join()
+
 }
 
+private suspend fun testPC() {
+    val parentJob = MyGlobalScope.claunch {
+        val job1 = claunch {
+            println("1 start")
+            delay(100L)
+            println("1 end")
+        }
+        job1.invokeOnCancel {
+            println("1 cancel")
+        }
+
+        val job2 = claunch {
+            println("2 start")
+            delay(2000L)
+            println("2 end")
+        }
+        job2.invokeOnCancel {
+            println("2 cancel")
+        }
+
+        val job3 = claunch {
+            println("3 start")
+            delay(5000L)
+            println("3 end")
+        }
+        job3.invokeOnCancel {
+            println("3 cancel")
+        }
+    }
+
+    delay(50L)
+    parentJob.cancel()
+    delay(5000L)
+
+}
