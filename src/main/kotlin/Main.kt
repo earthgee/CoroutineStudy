@@ -194,7 +194,7 @@ fun channelTest() = runBlocking {
     log("end")
 }
 
-fun log(text: Any) = println(Thread.currentThread().name + " " + text)
+fun log(text: Any?) = println(Thread.currentThread().name + " " + text)
 
 //19 channel,使用receive
 fun channelReceiveTest() = runBlocking {
