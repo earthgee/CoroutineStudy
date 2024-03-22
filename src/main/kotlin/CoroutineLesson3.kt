@@ -1,12 +1,17 @@
 import kotlinx.coroutines.delay
 import kotlin.coroutines.*
 
+//第三章
+//1.createCoroutine
+//2.startCoroutine
+//3.带receiver createCoroutine
+//4.带receiver startCoroutine
 suspend fun main() {
 //    continuation.resume(Unit)
 
-//    startCoroutine()
-//
-//    Thread.sleep(3000)
+    startCoroutine()
+
+    Thread.sleep(3000)
 }
 
 //不带receiver的启动协程
@@ -31,7 +36,7 @@ fun <R, T> launchCoroutine(receiver: R, block: suspend R.() -> T) {
             get() = EmptyCoroutineContext
 
         override fun resumeWith(result: Result<T>) {
-            println("thread:${Thread.currentThread().name}")
+            println("resume thread:${Thread.currentThread().name}")
             println("resumeWith:$result")
         }
 
@@ -53,5 +58,6 @@ fun startCoroutine(){
         delay(1000L)
         println("thread:${Thread.currentThread().name}")
         produce(2048)
+        "hello"
     }
 }
