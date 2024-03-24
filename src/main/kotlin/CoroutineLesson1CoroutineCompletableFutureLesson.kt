@@ -1,6 +1,4 @@
 import java.util.concurrent.CompletableFuture
-import java.util.concurrent.Executors
-import java.util.concurrent.Future
 import kotlin.random.Random
 
 fun main() {

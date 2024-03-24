@@ -6,6 +6,7 @@ import kotlin.coroutines.*
 //2.startCoroutine
 //3.带receiver createCoroutine
 //4.带receiver startCoroutine
+//suspend main的原理解析
 suspend fun main() {
 //    continuation.resume(Unit)
 

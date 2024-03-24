@@ -2,6 +2,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.concurrent.thread
 import kotlin.coroutines.resume
 
+//suspendCancellableCoroutine 测试
 suspend fun returnSuspended() = suspendCancellableCoroutine<String> {
     continuation ->
     thread {

@@ -4,6 +4,8 @@ import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.coroutines.startCoroutine
 
+//kotlin runsuspend的实现
+//suspend main
 internal fun runSuspend(block: suspend () -> Unit) {
     val run = RunSuspend()
     block.startCoroutine(run)

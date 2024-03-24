@@ -3,7 +3,7 @@ import kotlin.coroutines.CoroutineContext;
 import kotlin.coroutines.EmptyCoroutineContext;
 import org.jetbrains.annotations.NotNull;
 
-public class JavaCallCoroutine {
+public class CoroutineLesson3JavaCallCoroutine {
 
     public static void main(String[] args) {
         CoroutineLesson3_2Kt.notSuspend(new Continuation<Integer>() {

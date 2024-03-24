@@ -6,12 +6,13 @@ import kotlin.coroutines.intrinsics.IntrinsicsKt;
 import kotlinx.coroutines.DelayKt;
 import org.jetbrains.annotations.NotNull;
 
-public class ContinuationImpl implements Continuation<Object> {
+//kotlin协程原理 java仿写状态机实现
+public class CoroutineLesson3ContinuationImpl implements Continuation<Object> {
 
     private int label = 0;
     private final Continuation<Unit> completion;
 
-    public ContinuationImpl(Continuation<Unit> completion) {
+    public CoroutineLesson3ContinuationImpl(Continuation<Unit> completion) {
         this.completion = completion;
     }
 
@@ -28,7 +29,7 @@ public class ContinuationImpl implements Continuation<Object> {
             switch (label) {
                 case 0: {
                     MainKt.log(1);
-                    result = ContinuationImplCaseKt.returnSuspended(this);
+                    result = CoroutineLesson3ContinuationImplCaseKt.returnSuspended(this);
                     label ++;
                     if(isSuspended(result)) return;
                 }
@@ -41,7 +42,7 @@ public class ContinuationImpl implements Continuation<Object> {
                 }
                 case 2: {
                     MainKt.log(3);
-                    result = ContinuationImplCaseKt.returnImmediately(this);
+                    result = CoroutineLesson3ContinuationImplCaseKt.returnImmediately(this);
                     label ++;
                     if(isSuspended(result)) return;
                 }
@@ -61,8 +62,8 @@ public class ContinuationImpl implements Continuation<Object> {
     }
 
     public static void main(String[] args) throws Throwable{
-        JavaRunSuspend javaRunSuspend = new JavaRunSuspend();
-        ContinuationImpl table = new ContinuationImpl(javaRunSuspend);
+        CoroutineLesson3JavaRunSuspend javaRunSuspend = new CoroutineLesson3JavaRunSuspend();
+        CoroutineLesson3ContinuationImpl table = new CoroutineLesson3ContinuationImpl(javaRunSuspend);
         table.resumeWith(Unit.INSTANCE);
         javaRunSuspend.await();
     }

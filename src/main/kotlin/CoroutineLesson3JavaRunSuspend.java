@@ -4,7 +4,8 @@ import kotlin.coroutines.CoroutineContext;
 import kotlin.coroutines.EmptyCoroutineContext;
 import org.jetbrains.annotations.NotNull;
 
-public class JavaRunSuspend implements Continuation<Unit> {
+//kotlin suspend main的java实现
+public class CoroutineLesson3JavaRunSuspend implements Continuation<Unit> {
 
     private Object result;
 

@@ -1,9 +1,9 @@
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.concurrent.thread
 import kotlin.coroutines.*
 
+//suspendCoroutine的原理解析
 suspend fun getLength(text: String): Int = suspendCoroutine { continuation ->
     thread {
         Thread.sleep(1000L)
@@ -51,11 +51,11 @@ suspend fun block2(): String {
 fun main() = runBlocking{
 //    println(getLength("earthgee"))
 
-//    deconstructGetLength()
-//
-//    Thread.sleep(2000L)
+    deconstructGetLength()
 
-    testStartCoroutine()
     Thread.sleep(2000L)
+
+//    testStartCoroutine()
+//    Thread.sleep(2000L)
 
 }
