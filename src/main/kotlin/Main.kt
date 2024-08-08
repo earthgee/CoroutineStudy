@@ -8,16 +8,15 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.lang.Exception
 import java.util.concurrent.Executors
-import kotlin.coroutines.Continuation
 
 suspend fun main(args: Array<String>) {
-    //simpleCoroutine()
+//    simpleCoroutine()
 
 //    simpleAsync()
 
-//    traversal()
+    traversal()
 
-    coroutinePC()
+//    coroutinePC()
 
 //    asyncMulti()
 
@@ -166,7 +165,7 @@ fun asyncMulti() = runBlocking {
 
 //17 协程上下文
 fun testCoroutineContext() = runBlocking {
-    val exceptionHandler = CoroutineExceptionHandler { coroutineContext, throwable ->
+    val exceptionHandler = coroutineLite.CoroutineExceptionHandler { coroutineContext, throwable ->
         println("${coroutineContext[CoroutineName]?.name} - ${throwable.message}")
         println(throwable.stackTraceToString())
     }
@@ -363,6 +362,21 @@ fun testCoroutineSource() {
     var label = 0
     label = label or Int.MIN_VALUE
     println(label)
+}
+
+//协程源码探究
+fun test() {
+    val coroutineDispatcher = newSingleThreadContext("ctx")
+    GlobalScope.launch(coroutineDispatcher) {
+        println("first coroutine start")
+        async(Dispatchers.IO) {
+            println("second coroutine start")
+            delay(100)
+            println("second coroutine end")
+        }.await()
+        println("first coroutine end")
+    }
+    Thread.sleep(500)
 }
 
 

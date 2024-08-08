@@ -3,6 +3,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 
+//coroutineScope 和 supervisor作用域区别
 suspend fun main() {
     supervisorScopeFun()
 }

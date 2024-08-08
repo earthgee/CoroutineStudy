@@ -1,3 +1,5 @@
+package coroutineLite
+
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import java.util.concurrent.CompletableFuture
@@ -10,12 +12,14 @@ import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 import kotlin.coroutines.intrinsics.intercepted
 import kotlin.random.Random
 
-interface CJob: CoroutineContext.Element {
+//bennyhuo coroutinelite
+//e E前缀代表earthgee
+interface EJob: CoroutineContext.Element {
 
-    companion object Key: CoroutineContext.Key<CJob>
+    companion object Key: CoroutineContext.Key<EJob>
 
     override val key: CoroutineContext.Key<*>
-        get() = CJob
+        get() = EJob
 
     val isActive: Boolean
 
@@ -33,29 +37,32 @@ interface CJob: CoroutineContext.Element {
 
 }
 
-interface CDeferred<T>: CJob {
+interface EDeferred<T>: EJob {
 
     suspend fun await(): T
 
 }
 
-abstract class AbstractCoroutine<T>(context: CoroutineContext)
-    : CJob, Continuation<T>, CoroutineMyScope {
+abstract class EAbstractCoroutine<T>(context: CoroutineContext)
+    : EJob, Continuation<T>, ECoroutineMyScope {
 
-    protected val parentJob = context[CJob]
+    protected val parentJob = context[EJob]
 
     private var parentCancelDisposable: Disposable? = null
 
+    //协程状态
     protected val state = AtomicReference<CoroutineState>()
-
+    //当前协程上下文
     override val context: CoroutineContext
 
     override val scopeContext: CoroutineContext
         get() = context
 
+    //协程执行完状态
     val isCompleted
         get() = state.get() is CoroutineState.Complete<*>
 
+    //协程是否活跃
     override val isActive: Boolean
         get() = when(state.get()) {
             is CoroutineState.Complete<*>,
@@ -159,7 +166,7 @@ abstract class AbstractCoroutine<T>(context: CoroutineContext)
             is CoroutineState.Cancelling ->
                 return joinSuspend()
             is CoroutineState.Complete<*> -> {
-                val currentCallingJobState = coroutineContext[CJob]?.isActive ?: return
+                val currentCallingJobState = coroutineContext[EJob]?.isActive ?: return
                 if(!currentCallingJobState) {
                     throw CancellationException("Coroutine is Cancelled")
                 }
@@ -184,8 +191,9 @@ abstract class AbstractCoroutine<T>(context: CoroutineContext)
             when(prev) {
                 is CoroutineState.Cancelling,
                 is CoroutineState.Incomplete -> {
-                    CoroutineState.Complete(result.getOrNull()
-                        , result.exceptionOrNull()).from(prev)
+                    CoroutineState.Complete(
+                        result.getOrNull(), result.exceptionOrNull()
+                    ).from(prev)
                 }
                 is CoroutineState.Complete<*> -> {
                     throw IllegalStateException("Already completed")
@@ -231,8 +239,9 @@ interface Disposable {
 
 }
 
+//完成回调
 class CompletionHandlerDisposable<T>(
-    val job: CJob,
+    val job: EJob,
     val onComplete: (Result<T>) -> Unit) : Disposable {
     override fun dispose() {
         job.remove(this)
@@ -240,7 +249,8 @@ class CompletionHandlerDisposable<T>(
 
 }
 
-class CancellationHandlerDisposable(val job: CJob, val onCancel: OnCancel): Disposable {
+//取消回调
+class CancellationHandlerDisposable(val job: EJob, val onCancel: OnCancel): Disposable {
 
     override fun dispose() {
         job.remove(this)
@@ -252,6 +262,7 @@ typealias OnCancel = () -> Unit
 
 typealias OnComplete = () -> Unit
 
+//回调随状态流转
 sealed class CoroutineState {
     class Incomplete: CoroutineState()
     class Cancelling: CoroutineState()
@@ -293,6 +304,7 @@ sealed class CoroutineState {
 
 }
 
+//递归链表数据结构
 sealed class DisposableList {
     class Nil: DisposableList()
     class Cons(val head: Disposable, val tail: DisposableList): DisposableList()
@@ -328,8 +340,9 @@ inline fun <reified T: Disposable> DisposableList.loopOn(crossinline action: (T)
             action(it)
         }
     }
+//递归链表数据结构 end
 
-class StandaloneCoroutine(context: CoroutineContext): AbstractCoroutine<Unit>(context) {
+class EStandaloneCoroutine(context: CoroutineContext): EAbstractCoroutine<Unit>(context) {
 
     override fun handleJobException(e: Throwable): Boolean {
         super.handleJobException(e)
@@ -342,8 +355,8 @@ class StandaloneCoroutine(context: CoroutineContext): AbstractCoroutine<Unit>(co
 
 }
 
-class CDeferredCoroutine<T>(context: CoroutineContext)
-    : AbstractCoroutine<T>(context), CDeferred<T> {
+class EDeferredCoroutine<T>(context: CoroutineContext)
+    : EAbstractCoroutine<T>(context), EDeferred<T> {
     override suspend fun await(): T {
         val currentState = state.get()
         return when(currentState) {
@@ -366,16 +379,16 @@ class CDeferredCoroutine<T>(context: CoroutineContext)
 
 }
 
-fun CoroutineMyScope.claunch(context: CoroutineContext = EmptyCoroutineContext,
-           block: suspend CoroutineMyScope.() -> Unit): CJob {
-    val completion = StandaloneCoroutine(newCoroutineContext(context))
+fun ECoroutineMyScope.elaunch(context: CoroutineContext = EmptyCoroutineContext,
+                              block: suspend ECoroutineMyScope.() -> Unit): EJob {
+    val completion = EStandaloneCoroutine(newCoroutineContext(context))
     block.startCoroutine(completion, completion)
     return completion
 }
 
-fun <T> CoroutineMyScope.casync(context: CoroutineContext = EmptyCoroutineContext,
-           block: suspend CoroutineMyScope.() -> T): CDeferred<T> {
-    val completion = CDeferredCoroutine<T>(newCoroutineContext(context))
+fun <T> ECoroutineMyScope.casync(context: CoroutineContext = EmptyCoroutineContext,
+                                 block: suspend ECoroutineMyScope.() -> T): EDeferred<T> {
+    val completion = EDeferredCoroutine<T>(newCoroutineContext(context))
     block.startCoroutine(completion, completion)
     return completion
 }
@@ -393,7 +406,8 @@ open class DispatcherContext(private val dispatcher: CDispatcher)
 }
 
 private class DispatchedContinuation<T>(val delegate: Continuation<T>,
-                                        val dispatcher: CDispatcher): Continuation<T> {
+                                        val dispatcher: CDispatcher
+): Continuation<T> {
 
     override val context: CoroutineContext = delegate.context
 
@@ -413,7 +427,8 @@ object DefaultDispatcher: CDispatcher {
     private val executor = Executors.newFixedThreadPool(
         Runtime.getRuntime().availableProcessors() +1
     ) { runnable ->
-        Thread(threadGroup, runnable,
+        Thread(
+            threadGroup, runnable,
             "${threadGroup.name}=worker-${threadIndex.getAndIncrement()}").apply {
                 isDaemon = true
         }
@@ -432,7 +447,7 @@ object CDispatchers {
     }
 }
 
-fun CoroutineMyScope.newCoroutineContext(context: CoroutineContext): CoroutineContext {
+fun ECoroutineMyScope.newCoroutineContext(context: CoroutineContext): CoroutineContext {
     val combined = scopeContext + context +
             CCoroutineName("@coroutine")
     return if(combined != CDispatchers.Default
@@ -507,7 +522,7 @@ class CancellableContinuation<T>(private val continuation: Continuation<T>)
             return
         }
 
-        val parent = continuation.context[CJob] ?: return
+        val parent = continuation.context[EJob] ?: return
         parent.cancel()
     }
 
@@ -515,7 +530,7 @@ class CancellableContinuation<T>(private val continuation: Continuation<T>)
         if(isCompleted) {
             return
         }
-        val parent = continuation.context[CJob] ?: return
+        val parent = continuation.context[EJob] ?: return
         parent.invokeOnCancel {
             doCancel()
         }
@@ -605,7 +620,7 @@ inline fun CoroutineExceptionHandler(crossinline handler: (CoroutineContext, Thr
         }
 
 //scope
-interface CoroutineMyScope {
+interface ECoroutineMyScope {
     val scopeContext: CoroutineContext
 }
 
@@ -627,15 +642,15 @@ interface CoroutineMyScope {
 //    }
 //}
 
-suspend fun <R> coroutineMyScope(block: suspend CoroutineMyScope.() -> R): R =
+suspend fun <R> coroutineMyScope(block: suspend ECoroutineMyScope.() -> R): R =
     suspendCoroutine {  continuation ->
-        val coroutine = ScopeCoroutine(continuation.context, continuation)
+        val coroutine = ScopeCoroutineE(continuation.context, continuation)
         block.startCoroutine(coroutine, coroutine)
     }
 
-internal open class ScopeCoroutine<T>(
+internal open class ScopeCoroutineE<T>(
     context: CoroutineContext,
-    protected val continuation: Continuation<T>) : AbstractCoroutine<T>(context) {
+    protected val continuation: Continuation<T>) : EAbstractCoroutine<T>(context) {
 
     override fun resumeWith(result: Result<T>) {
         super.resumeWith(result)
@@ -644,7 +659,7 @@ internal open class ScopeCoroutine<T>(
 
 }
 
-object MyGlobalScope: CoroutineMyScope {
+object MyGlobalScope: ECoroutineMyScope {
     override val scopeContext: CoroutineContext
         get() = EmptyCoroutineContext
 
@@ -664,9 +679,9 @@ suspend fun main() {
     testPC()
 }
 
-suspend fun testCLaunch() {
+suspend fun testELaunch() {
     coroutineMyScope {
-        val job = claunch {
+        val job = elaunch {
             println("hello")
             delay(1000L)
             println("world")
@@ -705,7 +720,7 @@ suspend fun testThreadAsync() {
 
 private suspend fun testCancel() {
     coroutineMyScope {
-        val job = claunch {
+        val job = elaunch {
             println("testCancel")
             val r0 = nonCancellableFunction()
             println("r0:$r0")
@@ -763,7 +778,7 @@ suspend fun testException() {
     }
 
     coroutineMyScope {
-        val job = claunch(exceptionHandler) {
+        val job = elaunch(exceptionHandler) {
             println("hello")
             throw NullPointerException("aha null")
             println("world")
@@ -777,8 +792,8 @@ suspend fun testException() {
 }
 
 private suspend fun testPC() {
-    val parentJob = MyGlobalScope.claunch {
-        val job1 = claunch {
+    val parentJob = MyGlobalScope.elaunch {
+        val job1 = elaunch {
             println("1 start")
             delay(100L)
             println("1 end")
@@ -787,7 +802,7 @@ private suspend fun testPC() {
             println("1 cancel")
         }
 
-        val job2 = claunch {
+        val job2 = elaunch {
             println("2 start")
             delay(2000L)
             println("2 end")
@@ -796,7 +811,7 @@ private suspend fun testPC() {
             println("2 cancel")
         }
 
-        val job3 = claunch {
+        val job3 = elaunch {
             println("3 start")
             delay(5000L)
             println("3 end")

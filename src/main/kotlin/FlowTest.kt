@@ -7,13 +7,22 @@ suspend fun main() {
 
 //    triggerSimpleFlow()
 
+//    testFlowZip()
+
+//    testFlowMerge()
+
+//    testFlowCombine()
+
 //    testFlowConflate()
 
 //    testSharedFlow1()
 
 //    testSharedFlow2()
 
-    testSharedFlow3()
+//    testSharedFlow3()
+
+    testSharedFlowTransform()
+
 }
 
 //简单flow
@@ -28,7 +37,16 @@ suspend fun simpleFlow1() {
 
     //flowOn 运行时绑定调度器
     GlobalScope.launch {
-        intFlow.flowOn(Dispatchers.IO)
+//        intFlow.transform {
+//            emit(it)
+//            emit("transform $it")
+//        }.collect {
+//            println(it)
+//        }
+
+        intFlow.filter {
+            it > 0
+        }.flowOn(Dispatchers.IO)
             .catch { _ ->
                 emit(-1)
             }.collect {
@@ -111,5 +129,77 @@ fun testSharedFlow3() {
         }
     }
 }
+
+//多路流处理示例
+suspend fun testFlowZip() {
+    GlobalScope.launch {
+        val flow1 = flowOf(1,2,3)
+        val flow2 = flowOf("a", "b", "c")
+
+        flow1.zip(flow2) { num, str ->
+            "$num$str"
+        }.collect {
+            println("zip:$it")
+        }
+    }.join()
+}
+
+suspend fun testFlowMerge() {
+    GlobalScope.launch {
+        val flow1 = flowOf("d", "e", "f")
+        val flow2 = flowOf("a", "b", "c")
+
+        merge(flow1, flow2).collect {
+            println("merge: $it")
+        }
+
+    }.join()
+}
+
+suspend fun testFlowCombine() {
+    GlobalScope.launch {
+        val flow1 = flowOf(1,2,3)
+        val flow2 = flowOf("a", "b", "c")
+
+        flow1.combine(flow2) { num, str ->
+            "$num$str"
+        }.collect {
+            println("combine:$it")
+        }
+    }.join()
+}
+
+suspend fun testSharedFlowTransform() {
+    GlobalScope.launch {
+        val flow1 = mutableListOf(1,2,3,4).asFlow()
+            .shareIn(this, SharingStarted.Eagerly, replay = 4)
+        val flow2 = arrayOf(5,6,7,8).asFlow()
+            .shareIn(this, SharingStarted.Eagerly, 4)
+        val flow3 = MutableStateFlow(9)
+        flow3.emit(10)
+
+        launch {
+            flow1.collect {
+                println("flow1,collect $it")
+            }
+        }
+
+        launch {
+            flow2.collect {
+                println("flow2,collect $it")
+            }
+        }
+
+        launch {
+            flow3.collect {
+                println("flow3,collect $it")
+            }
+        }
+    }.join()
+}
+
+
+
+
 
 
